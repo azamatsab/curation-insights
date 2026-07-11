@@ -39,6 +39,10 @@ HYBRID = os.getenv("HYBRID", "1") == "1"
 DENSE_POOL = int(os.getenv("DENSE_POOL", "40"))   # candidates pulled from each retriever
 RRF_K = int(os.getenv("RRF_K", "60"))             # RRF damping constant
 
+# Router: keyword-first, escalate to a cheap LLM classifier only on ambiguous queries
+# (no ticker found, or a vague "what about X?"). 0 = keyword only.
+LLM_ROUTER = os.getenv("LLM_ROUTER", "1") == "1"
+
 # Hard budget guard: extraction aborts if cumulative spend would exceed this.
 BUDGET_USD = float(os.getenv("BUDGET_USD", "2.50"))
 

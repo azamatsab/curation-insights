@@ -47,12 +47,13 @@ if q := st.chat_input("Ask about a stock or token…"):
         st.markdown(q)
     with st.chat_message("assistant"):
         with st.spinner("Searching community + filings…"):
-            res = query.answer(q)
-        st.markdown(res["answer"])
+            gen, res = query.answer_stream(q)   # route + retrieve
+        st.write_stream(gen)                    # stream synthesis token-by-token
         r = res["route"]
         st.caption(f"⏱ {res['latency_s']}s · 💸 ${res['cost_usd']} · "
                    f"route: {r['intent']}" + (f" · {r['ticker']}" if r["ticker"] else "")
-                   + (f" · {r['category']}" if r["category"] else ""))
+                   + (f" · {r['category']}" if r["category"] else "")
+                   + (" · 🤖 llm-router" if r.get("llm_router") else ""))
         if res["ranked"]:
             with st.expander("Ranked themes (from the structured index)"):
                 for x in res["ranked"]:

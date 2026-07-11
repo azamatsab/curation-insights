@@ -109,20 +109,40 @@ reviewer skip ingestion entirely.
 
 ## Deliberately out of MVP scope (designed, not built)
 
-Each is a one-line upgrade path, kept out to fit the time box:
+Still cut to fit the time box:
 
-- **LLM query router** — currently keyword-based; an LLM classifier handles ambiguous phrasing.
-- **Corrective-RAG loop** — relevance-check + reformulate when retrieval is weak (trades latency for recall).
 - **Structured extraction from filings** — today filings are vector-only; the community is where
   aggregation matters, so structure is spent there (you pre-structure the *predictable* queries,
-  and let the vector tail generalize).
-- **Eval harness** — retrieval precision + answer faithfulness; and query logging for the usage metrics.
-- **Streaming synthesis** — the answer is one LLM call (~7s); streaming would cut perceived latency.
+  and let the vector tail generalize). A filing-side risk-factor table would make the
+  community-vs-company comparison exact rather than semantic.
+- **Stronger faithfulness judge** — the eval's LLM judge is noisy at Haiku tier (false-positives
+  on real citations); a stronger judge + majority vote would give a trustworthy claim-support number.
+- **Usage-metric logging** — query logging + sessions for the "questions sent / retention" metrics.
 
-**Built beyond the core** (retrieval-quality features that pay off on this data):
+**Built beyond the core** (retrieval + reliability features that pay off on this data):
 
 - **Recency-weighted ranking** — half-life decay on the aggregation (`RECENCY_HALF_LIFE_DAYS`).
 - **Hybrid retrieval** — dense + BM25 via RRF, so exact cashtags/tickers aren't lost to embeddings.
+- **Hybrid router** — keyword fast-path + a cheap LLM classifier on ambiguous queries (fixes vague
+  "what about X?" going thin); toggle with `LLM_ROUTER=0`.
+- **Corrective retrieval (CRAG-light)** — when a ticker's evidence comes back thin, a second
+  ticker-anchored retrieval pass, at no extra LLM cost.
+- **Streaming synthesis** — answers stream token-by-token in the UI; same cost, far lower
+  *perceived* latency (time-to-first-token ~1s vs ~6s for the full answer).
+
+### Evaluation — `python eval.py`
+
+Answers "how do you know it works?" on a small gold set, reusing the built indexes (~$0.04):
+
+| Metric | What it measures | Latest |
+|---|---|---|
+| **Routing accuracy** | did the router pick the right ticker + intent? (deterministic) | 6/6 |
+| **Citation grounding** | is every `[chat:X]` / `[filing:Y]` the answer cites actually in the retrieved evidence? (deterministic — the reliable faithfulness signal) | 6/6 |
+| **LLM-judge faithfulness** | does an LLM judge think every claim is supported? (advisory — noisy at Haiku tier) | 2/6 |
+
+The gap between the two faithfulness columns is itself a finding: a cheap LLM judge
+false-positives on real citations, so the harness anchors on the deterministic check and
+treats the judge as advisory.
 
 ---
 
