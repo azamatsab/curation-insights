@@ -1,0 +1,7 @@
+.env
+store/
+__pycache__/
+*.pyc
+data/tesla/
+data/interview_synthetic_chat.json
+.venv/
