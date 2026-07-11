@@ -51,9 +51,16 @@ OLAP job, which is exactly what the relational store is for.
 ```
 
 - **Structured index — SQLite.** One row per insight → aggregation / ranking.
+  Ranking is **recency-weighted**: each insight decays by a half-life
+  (`RECENCY_HALF_LIFE_DAYS`), so "most discussed" means "most discussed *lately*" and a
+  stale burst can't dominate. `n` (raw count) and `voices` (distinct investors) are shown
+  alongside the weighted `score`. Reference "now" is the newest timestamp in the data.
 - **Vector index — ChromaDB.** Chat messages + Tesla filing chunks → semantic evidence.
   Embeddings are the **local** default (all-MiniLM via onnxruntime) — no API key, no rate
   limits, so retrieval never depends on a paid API being up. A deliberate reliability choice.
+  Retrieval is **hybrid**: dense (Chroma) + lexical (BM25) fused with Reciprocal Rank
+  Fusion. BM25 nails exact cashtags / tickers / numbers that dense embeddings blur — which
+  matters here because the chat is full of `$TSLA`-style symbols. Toggle with `HYBRID=0`.
 - **LLM (Anthropic).** Used in exactly two places: offline insight extraction and answer
   synthesis. Default model **Haiku 4.5** (cheapest capable); override to Opus via env.
 
@@ -105,14 +112,17 @@ reviewer skip ingestion entirely.
 Each is a one-line upgrade path, kept out to fit the time box:
 
 - **LLM query router** — currently keyword-based; an LLM classifier handles ambiguous phrasing.
-- **Hybrid retrieval (BM25 + dense, RRF)** — BM25 nails exact cashtags/numbers dense vectors blur.
 - **Corrective-RAG loop** — relevance-check + reformulate when retrieval is weak (trades latency for recall).
 - **Structured extraction from filings** — today filings are vector-only; the community is where
   aggregation matters, so structure is spent there (you pre-structure the *predictable* queries,
   and let the vector tail generalize).
-- **Staleness weighting** — records carry a timestamp; a recency decay would bias "most discussed"
-  toward recent activity. Data here spans ~3 weeks, so it's a small effect.
 - **Eval harness** — retrieval precision + answer faithfulness; and query logging for the usage metrics.
+- **Streaming synthesis** — the answer is one LLM call (~7s); streaming would cut perceived latency.
+
+**Built beyond the core** (retrieval-quality features that pay off on this data):
+
+- **Recency-weighted ranking** — half-life decay on the aggregation (`RECENCY_HALF_LIFE_DAYS`).
+- **Hybrid retrieval** — dense + BM25 via RRF, so exact cashtags/tickers aren't lost to embeddings.
 
 ---
 

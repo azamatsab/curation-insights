@@ -13,6 +13,7 @@ import config
 import store
 import llm
 
+
 AGG_TRIGGERS = ("most", "top", "biggest", "which", "ranked", "common",
                 "how many", "list", "discussed", "popular")
 RISK_WORDS = ("risk", "bear", "concern", "downside", "worry", "threat")

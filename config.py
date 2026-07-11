@@ -27,6 +27,18 @@ SYNTH_MODEL = os.getenv("SYNTH_MODEL", "claude-haiku-4-5")
 # cutting 1000 calls down to ~50 and keeping cost/latency low.
 EXTRACT_BATCH = int(os.getenv("EXTRACT_BATCH", "20"))
 
+# --- retrieval / ranking knobs ---
+# Recency weighting for aggregation. "Most discussed" decays older insights so it means
+# "most discussed *lately*". Half-life in days; 0 disables (pure count). Reference "now"
+# is the newest timestamp in the data (deterministic, no wall-clock).
+RECENCY_HALF_LIFE_DAYS = float(os.getenv("RECENCY_HALF_LIFE_DAYS", "10"))
+
+# Hybrid retrieval = dense (Chroma) + lexical (BM25) fused with Reciprocal Rank Fusion.
+# BM25 catches exact cashtags/tickers/numbers that dense embeddings blur.
+HYBRID = os.getenv("HYBRID", "1") == "1"
+DENSE_POOL = int(os.getenv("DENSE_POOL", "40"))   # candidates pulled from each retriever
+RRF_K = int(os.getenv("RRF_K", "60"))             # RRF damping constant
+
 # Hard budget guard: extraction aborts if cumulative spend would exceed this.
 BUDGET_USD = float(os.getenv("BUDGET_USD", "2.50"))
 
