@@ -62,8 +62,10 @@ OLAP job, which is exactly what the relational store is for.
   Retrieval is **hybrid**: dense (Chroma) + lexical (BM25) fused with Reciprocal Rank
   Fusion. BM25 nails exact cashtags / tickers / numbers that dense embeddings blur — which
   matters here because the chat is full of `$TSLA`-style symbols. Toggle with `HYBRID=0`.
-- **LLM (Anthropic).** Used in exactly two places: offline insight extraction and answer
-  synthesis. Default model **Haiku 4.5** (cheapest capable); override to Opus via env.
+- **LLM (Anthropic).** Four call sites: offline insight extraction (chat messages and
+  filing chunks), a fallback router classifier on ambiguous queries, and answer synthesis —
+  plus the eval judge in `eval.py`. Default model **Haiku 4.5** (cheapest capable, since
+  extraction volume is the cost driver); override via `EXTRACT_MODEL` / `SYNTH_MODEL` env.
 
 For Tesla, the flagship query becomes a strong pairing: the community's **most-discussed
 risks** next to the risks **Tesla itself reports** in its quarterly updates. The filing
@@ -93,7 +95,8 @@ data/
 Then:
 
 ```bash
-pip install -r requirements.txt          # anthropic, chromadb, pymupdf, streamlit
+# Python 3.9+
+pip install -r requirements.txt          # anthropic, chromadb, rank-bm25, pymupdf, streamlit
 export ANTHROPIC_API_KEY=sk-ant-...       # or cp .env.example .env and fill it in
 python ingest.py                          # builds SQLite + Chroma (idempotent, cached)
 python ingest.py --filing-risks           # structured risk extraction from filings
@@ -184,6 +187,21 @@ uses the judge as a real, actionable signal on paraphrase quality — the remain
 honest headroom, not judge noise. (The judge number varies 2–3/6 between runs because the
 *synthesis* is stochastic — each run regenerates the answers; the deterministic anchors
 are stable at 6/6.)
+
+---
+
+## Honest limitations
+
+- **The chat data is synthetic and templated** — many messages are near-duplicates with
+  different tickers swapped in, so theme aggregation looks thinner and more repetitive
+  than it would on a real community. The architecture is built for the real shape of the
+  problem; the numbers it surfaces reflect the sample data.
+- **Retention is session-scoped** — a "session" is a browser tab (UUID in Streamlit state).
+  Measuring true retention (the same user returning tomorrow) needs persistent identity
+  (cookie/auth), which is out of MVP scope.
+- **Synthesis quality has headroom at Haiku tier** — the judge's remaining findings are
+  paraphrase/attribution slips in the Haiku-written answers. `SYNTH_MODEL` is an env switch
+  away from a stronger model; the deterministic citation check would catch regressions.
 
 ---
 

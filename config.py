@@ -7,6 +7,16 @@ DATA = ROOT / "data"
 STORE = ROOT / "store"
 STORE.mkdir(exist_ok=True)
 
+# Load .env if present (README suggests `cp .env.example .env`; no python-dotenv dep).
+# Real environment variables win over .env values.
+_env = ROOT / ".env"
+if _env.exists():
+    for _line in _env.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 # --- data inputs ---
 CHAT_JSON = DATA / "interview_synthetic_chat.json"
 TESLA_DIR = DATA / "tesla"
