@@ -78,6 +78,20 @@ yet barely appears in community discussion."*
 
 ## Run it
 
+First, place the provided data files (not in the repo — they're Curation's dataset) where
+`config.py` expects them:
+
+```
+data/
+├── interview_synthetic_chat.json    # the community chat export, as provided
+└── tesla/
+    ├── TSLA-Q1-2022-Update.pdf      # the quarterly PDFs from tesla.zip, as-is —
+    ├── ...                          # the quarter label is parsed from the
+    └── TSLA-Q4-2024-Update.pdf      # "Q<n>-<year>" pattern in each filename
+```
+
+Then:
+
 ```bash
 pip install -r requirements.txt          # anthropic, chromadb, pymupdf, streamlit
 export ANTHROPIC_API_KEY=sk-ant-...       # or cp .env.example .env and fill it in
