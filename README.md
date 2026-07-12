@@ -81,8 +81,8 @@ python query.py "What are the most discussed risks investors mentioned about Tes
 ```
 
 `ingest.py` is **idempotent** — extraction is cached by message hash in
-`store/extract_cache.jsonl`, so re-runs cost nothing and a committed `store/` lets a
-reviewer skip ingestion entirely.
+`store/extract_cache.jsonl`, so a re-run costs nothing and only newly added messages hit
+the API. Ingesting the 1000 messages from scratch takes ~3 minutes and ~$0.43.
 
 ---
 
