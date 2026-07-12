@@ -1,5 +1,5 @@
 anthropic>=0.40
-chromadb>=0.5
+chromadb>=0.5        # pulls onnxruntime + tokenizers (local default embeddings)
 rank-bm25>=0.2.2
 pymupdf>=1.24
-streamlit>=1.30
+streamlit>=1.35      # st.feedback (thumbs) requires 1.35+
