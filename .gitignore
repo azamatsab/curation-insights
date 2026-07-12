@@ -5,3 +5,6 @@ __pycache__/
 data/tesla/
 data/interview_synthetic_chat.json
 .venv/
+
+# internal working notes — never ship to the client
+CLAUDE.md
