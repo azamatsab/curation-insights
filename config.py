@@ -15,7 +15,9 @@ TESLA_DIR = DATA / "tesla"
 SQLITE_PATH = STORE / "insights.sqlite"      # structured index (aggregation / ranking)
 CHROMA_PATH = str(STORE / "chroma")          # vector index (semantic retrieval)
 EXTRACT_CACHE = STORE / "extract_cache.jsonl"  # idempotent LLM-extraction cache
+FILING_EXTRACT_CACHE = STORE / "filing_extract_cache.jsonl"  # same, for filing risk extraction
 COST_LOG = STORE / "cost_log.jsonl"          # every LLM call's token usage + $ cost
+USAGE_LOG = STORE / "usage_log.jsonl"        # every user query: ts, session, route, latency
 
 # --- models ---
 # Extraction runs over ~1000 short messages, so it's the cost driver -> default to the
@@ -23,9 +25,18 @@ COST_LOG = STORE / "cost_log.jsonl"          # every LLM call's token usage + $ 
 EXTRACT_MODEL = os.getenv("EXTRACT_MODEL", "claude-haiku-4-5")
 SYNTH_MODEL = os.getenv("SYNTH_MODEL", "claude-haiku-4-5")
 
+# Judge for the eval harness. Haiku proved noisy as a judge (false-positives on real
+# citations), so the judge defaults to a stronger model + majority vote. Still advisory —
+# the deterministic citation-grounding check remains the primary faithfulness signal.
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "claude-sonnet-5")
+JUDGE_VOTES = int(os.getenv("JUDGE_VOTES", "3"))
+
 # Messages per extraction call. Batching amortizes the prompt across many messages,
 # cutting 1000 calls down to ~50 and keeping cost/latency low.
 EXTRACT_BATCH = int(os.getenv("EXTRACT_BATCH", "20"))
+
+# Filing chunks per extraction call (chunks are ~1400 chars, so smaller batches).
+FILING_EXTRACT_BATCH = int(os.getenv("FILING_EXTRACT_BATCH", "8"))
 
 # --- retrieval / ranking knobs ---
 # Recency weighting for aggregation. "Most discussed" decays older insights so it means

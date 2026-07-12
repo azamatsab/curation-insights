@@ -43,6 +43,13 @@ def init_db():
     );
     CREATE INDEX IF NOT EXISTS idx_ticker ON insights(ticker);
     CREATE INDEX IF NOT EXISTS idx_ticker_cat ON insights(ticker, category);
+    CREATE TABLE IF NOT EXISTS filing_risks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chunk_id TEXT,           -- Chroma chunk id the risk was extracted from
+        source TEXT,             -- quarter label, e.g. "Q1 2023"
+        theme TEXT, claim TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_filing_theme ON filing_risks(theme);
     """)
     con.commit()
     con.close()
@@ -97,6 +104,35 @@ def most_discussed(ticker, category=None, top_n=6):
     return out[:top_n]
 
 
+def top_tickers_by(category=None, top_n=6):
+    """Cross-ticker ranking for aggregate queries WITHOUT a ticker ("where's the biggest
+    opportunity?"): rank tickers by (recency-weighted) mention count in a category.
+    Same scoring rules as most_discussed()."""
+    con = db()
+    q = "SELECT ticker, asset_name, sender, ts FROM insights"
+    args = []
+    if category:
+        q += " WHERE category = ?"
+        args.append(category)
+    rows = con.execute(q, args).fetchall()
+    con.close()
+
+    agg = {}
+    for r in rows:
+        a = agg.setdefault(r["ticker"], {"ticker": r["ticker"], "name": "", "n": 0,
+                                         "score": 0.0, "voices": set()})
+        a["n"] += 1
+        a["score"] += _recency_weight(r["ts"])
+        a["voices"].add(r["sender"])
+        if not a["name"] and r["asset_name"]:
+            a["name"] = r["asset_name"]
+    out = [{"ticker": a["ticker"], "name": a["name"], "n": a["n"],
+            "score": round(a["score"], 2), "voices": len(a["voices"])} for a in agg.values()]
+    key = "score" if config.RECENCY_HALF_LIFE_DAYS > 0 else "n"
+    out.sort(key=lambda x: (x[key], x["voices"]), reverse=True)
+    return out[:top_n]
+
+
 def ticker_coverage():
     con = db()
     rows = [dict(r) for r in con.execute(
@@ -116,6 +152,35 @@ def themes_for(ticker):
            FROM insights WHERE ticker = ? GROUP BY theme ORDER BY n DESC""", (ticker,))]
     con.close()
     return rows
+
+
+def _quarter_key(src):
+    """'Q3 2023' -> (2023, 3) so quarters sort chronologically."""
+    m = re.match(r"Q(\d)\s+(\d{4})", src or "")
+    return (int(m.group(2)), int(m.group(1))) if m else (0, 0)
+
+
+def filing_risk_themes(top_n=8):
+    """Tesla's own disclosed risk themes, aggregated from the structured filing
+    extraction. Makes 'community themes vs company-disclosed themes' an exact
+    comparison instead of a semantic one. Empty list if extraction hasn't run."""
+    con = db()
+    try:
+        rows = con.execute(
+            "SELECT theme, source FROM filing_risks WHERE theme != ''").fetchall()
+    except sqlite3.OperationalError:   # table doesn't exist yet (pre-extraction DB)
+        con.close()
+        return []
+    con.close()
+    agg = {}
+    for r in rows:
+        a = agg.setdefault(r["theme"], {"theme": r["theme"], "n": 0, "quarters": set()})
+        a["n"] += 1
+        a["quarters"].add(r["source"])
+    out = [{"theme": a["theme"], "n": a["n"],
+            "quarters": sorted(a["quarters"], key=_quarter_key)} for a in agg.values()]
+    out.sort(key=lambda x: x["n"], reverse=True)
+    return out[:top_n]
 
 
 def known_tickers():

@@ -138,7 +138,72 @@ def ingest_tesla():
     print(f"tesla: wrote {len(ids)} chunks to vector store")
 
 
+# ------------------------------------------------- structured filing risk extraction
+def _load_filing_cache():
+    cache = {}
+    if config.FILING_EXTRACT_CACHE.exists():
+        for line in open(config.FILING_EXTRACT_CACHE):
+            if line.strip():
+                r = json.loads(line)
+                cache[r["chunk_id"]] = r["risks"]
+    return cache
+
+
+def extract_filing_risks(sample=None):
+    """Second enrichment pass: turn Tesla's filing chunks (already in Chroma) into
+    structured (theme, claim) rows in SQLite, so community-vs-company theme comparison
+    is exact. Cached per chunk id; `sample=N` processes only the first N uncached chunks
+    (validate the prompt cheaply before the full run)."""
+    got = store.collection("filings").get(include=["documents", "metadatas"])
+    chunks = list(zip(got["ids"], got["documents"], got["metadatas"]))
+    chunks.sort(key=lambda c: c[0])
+    cache = _load_filing_cache()
+
+    uncached = [c for c in chunks if c[0] not in cache]
+    todo = uncached[:sample] if sample else uncached
+    print(f"filings: {len(chunks)} chunks, {len(cache)} cached, extracting {len(todo)}"
+          + (f" (sample of {len(uncached)} uncached)" if sample else ""))
+
+    for start in range(0, len(todo), config.FILING_EXTRACT_BATCH):
+        if llm.total_cost() >= config.BUDGET_USD:
+            print(f"!! budget guard hit (${llm.total_cost()} >= ${config.BUDGET_USD}) — stopping")
+            sys.exit(1)
+        batch = todo[start:start + config.FILING_EXTRACT_BATCH]
+        items = [(i, batch[i][1]) for i in range(len(batch))]
+        result = llm.extract_filing_batch(items)
+        with open(config.FILING_EXTRACT_CACHE, "a") as f:
+            for i, (cid, _, _) in enumerate(batch):
+                f.write(json.dumps({"chunk_id": cid, "risks": result.get(i, [])}) + "\n")
+        print(f"  extracted {min(start + len(batch), len(todo))}/{len(todo)}  "
+              f"(spend so far: ${llm.total_cost()})")
+
+    # rebuild the table from the cache (idempotent, covers partial runs too)
+    cache = _load_filing_cache()
+    meta = {cid: m for cid, _, m in chunks}
+    store.init_db()
+    con = store.db()
+    con.execute("DELETE FROM filing_risks")
+    n = 0
+    for cid, risks in cache.items():
+        src = (meta.get(cid) or {}).get("source", "")
+        for r in risks:
+            con.execute("INSERT INTO filing_risks (chunk_id, source, theme, claim) VALUES (?,?,?,?)",
+                        (cid, src, r.get("theme", "").lower().strip(), r["claim"]))
+            n += 1
+    con.commit()
+    con.close()
+    print(f"filings: {n} disclosed-risk rows -> SQLite (from {len(cache)} extracted chunks)")
+    for t in store.filing_risk_themes(top_n=10):
+        print(f"  {t['theme']}: {t['n']} disclosures across {', '.join(t['quarters'])}")
+
+
 if __name__ == "__main__":
-    ingest_chat()
-    ingest_tesla()
+    if "--filing-risks" in sys.argv:
+        sample = None
+        if "--sample" in sys.argv:
+            sample = int(sys.argv[sys.argv.index("--sample") + 1])
+        extract_filing_risks(sample=sample)
+    else:
+        ingest_chat()
+        ingest_tesla()
     print(f"\nDONE. total LLM spend: ${llm.total_cost()}")

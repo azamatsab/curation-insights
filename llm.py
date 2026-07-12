@@ -112,6 +112,73 @@ def extract_batch(items):
     return {r["index"]: r["insights"] for r in data["results"]}
 
 
+# ---------------------------------------------------- filing risk extraction (Tesla)
+# Same pre-structuring principle as chat insights, applied to the company's own filings:
+# turn each chunk into (theme, claim) rows so "community themes vs company-disclosed
+# themes" becomes an exact join instead of a fuzzy semantic comparison.
+FILING_RISK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "risks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "theme": {"type": "string"},
+                                "claim": {"type": "string"},
+                            },
+                            "required": ["theme", "claim"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["index", "risks"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["results"],
+    "additionalProperties": False,
+}
+
+FILING_RISK_SYSTEM = """You read excerpts from Tesla's quarterly shareholder updates.
+For each excerpt, extract the risks / headwinds / challenges that TESLA ITSELF discloses,
+acknowledges, or describes (e.g. cost pressure, supply constraints, factory ramp issues,
+FX, logistics, demand softness, regulation, competition).
+
+Rules:
+- Only company-acknowledged downside factors. Marketing/bullish content yields nothing.
+- An excerpt with no risk content returns an empty list. Most excerpts will be empty.
+- theme: a SHORT normalized lowercase topic, reused across excerpts so it aggregates well
+  (use the same vocabulary as community themes where possible: "margins", "demand",
+   "supply", "production", "logistics", "regulation", "competition", "fsd/autonomy",
+   "macro", "valuation", "leadership"). Do not invent long unique themes.
+- claim: one concise sentence stating what the company said, in your words.
+
+Return results keyed by the given excerpt index."""
+
+
+def extract_filing_batch(items):
+    """items: list of (index, chunk_text). Returns {index: [risk_dict, ...]}."""
+    numbered = "\n\n".join(f"[{i}] {t}" for i, t in items)
+    resp = _retry(lambda: _client.messages.create(
+        model=config.EXTRACT_MODEL,
+        max_tokens=4096,
+        system=FILING_RISK_SYSTEM,
+        output_config={"format": {"type": "json_schema", "schema": FILING_RISK_SCHEMA}},
+        messages=[{"role": "user", "content": f"Excerpts:\n{numbered}"}],
+    ))
+    _log_cost(config.EXTRACT_MODEL, resp.usage, "extract_filing")
+    data = json.loads(next(b.text for b in resp.content if b.type == "text"))
+    return {r["index"]: r["risks"] for r in data["results"]}
+
+
 # ------------------------------------------------------------------ query router
 ROUTE_SCHEMA = {
     "type": "object",
@@ -155,6 +222,8 @@ Answer the user's question using ONLY the material provided below — never inve
 - Group the answer by theme where it helps.
 - Cite the source of each point inline: [chat: <sender>] for community messages,
   [filing: <source>] for Tesla's own reports.
+- Citation brackets must contain ONLY the source label — [chat: User004] or
+  [filing: Q1 2023] — never sentences, quotes, or commentary inside the brackets.
 - When both are present, clearly separate "What investors are saying" from
   "What the company reports" so the reader sees opinion vs. primary source.
 - You surface and organize insight; you do NOT give buy/sell advice. Keep it factual and neutral.
@@ -162,15 +231,39 @@ Answer the user's question using ONLY the material provided below — never inve
   count is given in the ranked themes. Only cite a [chat: sender] that appears in the evidence,
   and only quote filing wording that literally appears in the excerpts — never paraphrase a
   filing into a specific claim it doesn't state.
+- If COMPANY-DISCLOSED RISK THEMES are provided, add a short comparison: which community
+  concerns Tesla itself acknowledges in its filings, and which it does not. Refer to
+  quarters from that section in plain text (e.g. "disclosed in Q1 2023") — use the
+  [filing: <source>] citation format only for the literal filing excerpts.
+- Mention Tesla or its filings ONLY when the question is about Tesla. For any other
+  question, do not bring up Tesla, filings, or their absence at all.
 - If the material doesn't answer the question, say so plainly."""
 
 
-def _synth_prompt(question, ranked, chat_evidence, filing_evidence):
+def _company_risk_lines(company_risks):
+    lines = []
+    for r in company_risks:
+        lines.append(f"- {r['theme']}: {r['n']} disclosures across {', '.join(r['quarters'])}")
+    return lines
+
+
+def _synth_prompt(question, ranked, chat_evidence, filing_evidence, company_risks=None,
+                  ranked_tickers=None):
     parts = [f"QUESTION: {question}\n"]
     if ranked:
         parts.append("RANKED THEMES (counted across the whole community, recency-weighted):")
         for r in ranked:
             parts.append(f"- {r['theme']}: {r['n']} mentions from {r['voices']} distinct investors")
+        parts.append("")
+    if ranked_tickers:
+        parts.append("RANKED TICKERS (counted across the whole community, recency-weighted):")
+        for r in ranked_tickers:
+            label = f"{r['ticker']} ({r['name']})" if r.get("name") else r["ticker"]
+            parts.append(f"- {label}: {r['n']} mentions from {r['voices']} distinct investors")
+        parts.append("")
+    if company_risks:
+        parts.append("COMPANY-DISCLOSED RISK THEMES (structured from Tesla's own quarterly filings):")
+        parts.extend(_company_risk_lines(company_risks))
         parts.append("")
     if chat_evidence:
         parts.append("COMMUNITY MESSAGES (evidence):")
@@ -185,24 +278,30 @@ def _synth_prompt(question, ranked, chat_evidence, filing_evidence):
     return "\n".join(parts)
 
 
-def synthesize(question, ranked=None, chat_evidence=None, filing_evidence=None):
+def synthesize(question, ranked=None, chat_evidence=None, filing_evidence=None, company_risks=None,
+               ranked_tickers=None):
     """Blocking synthesis — used by the CLI and the eval harness."""
     resp = _retry(lambda: _client.messages.create(
         model=config.SYNTH_MODEL, max_tokens=1200, system=SYNTH_SYSTEM,
-        messages=[{"role": "user", "content": _synth_prompt(question, ranked, chat_evidence, filing_evidence)}],
+        messages=[{"role": "user", "content": _synth_prompt(question, ranked, chat_evidence,
+                                                            filing_evidence, company_risks,
+                                                            ranked_tickers)}],
     ))
     cost = _log_cost(config.SYNTH_MODEL, resp.usage, "synthesize")
     answer = "".join(b.text for b in resp.content if b.type == "text")
     return answer, cost
 
 
-def synthesize_stream(question, ranked=None, chat_evidence=None, filing_evidence=None):
+def synthesize_stream(question, ranked=None, chat_evidence=None, filing_evidence=None, company_risks=None,
+                      ranked_tickers=None):
     """Streaming synthesis — yields text deltas as they arrive (cuts perceived latency).
     Same cost as the blocking call; the token usage is logged once the stream finishes."""
     global _LAST_SYNTH_COST
     with _client.messages.stream(
         model=config.SYNTH_MODEL, max_tokens=1200, system=SYNTH_SYSTEM,
-        messages=[{"role": "user", "content": _synth_prompt(question, ranked, chat_evidence, filing_evidence)}],
+        messages=[{"role": "user", "content": _synth_prompt(question, ranked, chat_evidence,
+                                                            filing_evidence, company_risks,
+                                                            ranked_tickers)}],
     ) as stream:
         for text in stream.text_stream:
             yield text
