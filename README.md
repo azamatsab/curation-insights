@@ -67,6 +67,15 @@ OLAP job, which is exactly what the relational store is for.
   plus the eval judge in `eval.py`. Default model **Haiku 4.5** (cheapest capable, since
   extraction volume is the cost driver); override via `EXTRACT_MODEL` / `SYNTH_MODEL` env.
 
+> **Production note.** Two *indexes* is the architectural decision; two *stores* is a
+> deployment one. The MVP uses embedded stores (SQLite + Chroma) so the demo runs with
+> zero infrastructure — `pip install` and go. In production the same two indexes would
+> collapse into one engine: **Postgres + pgvector**. That keeps structured rows and
+> vectors in one database with one transaction boundary, and turns this MVP's one real
+> retrieval workaround into plain SQL — Chroma's metadata is scalar-only, so multi-ticker
+> filtering here is an over-fetch + post-filter, whereas in Postgres it's a `JOIN` on a
+> `message_tickers` table filtered *before* the vector search.
+
 For Tesla, the flagship query becomes a strong pairing: the community's **most-discussed
 risks** next to the risks **Tesla itself reports** in its quarterly updates. The filing
 side is pre-structured too — a second enrichment pass turns each filing chunk into
